@@ -86,7 +86,9 @@ ORG_ADMIN_PERMISSIONS = {
     all_permissions.users_token_any,
 }
 
-MANAGER_PERMISSIONS = set(all_permissions.model_dump().values()) - ORG_ADMIN_PERMISSIONS
+MANAGER_PERMISSIONS = (set(all_permissions.model_dump().values()) - ORG_ADMIN_PERMISSIONS) - {
+    all_permissions.projects_create,
+}
 
 ANNOTATOR_PERMISSIONS = {
     all_permissions.projects_view,
@@ -150,8 +152,20 @@ def get_effective_role(user, organization=None):
     return membership.effective_role
 
 
+def is_platform_owner(user):
+    if not getattr(user, 'is_authenticated', False):
+        return False
+
+    cache_key = '_is_platform_owner_cache'
+    if cache_key not in user.__dict__:
+        from users.models import PlatformOwner
+
+        user.__dict__[cache_key] = PlatformOwner.objects.filter(user=user).exists()
+    return user.__dict__[cache_key]
+
+
 def is_org_admin(user, organization=None):
-    return get_effective_role(user, organization) in {ROLE_OWNER, ROLE_ADMIN}
+    return is_platform_owner(user) or get_effective_role(user, organization) in {ROLE_OWNER, ROLE_ADMIN}
 
 
 def is_project_member(user, project):
@@ -217,6 +231,9 @@ def role_has_permission(permission_name, user, obj=None):
     if organization is None and permission_name == all_permissions.organizations_create:
         # Authenticated users can create their first organization before they belong to one.
         return True
+
+    if is_platform_owner(user):
+        return _has_object_scope(user, permission_name, obj)
 
     if role in {ROLE_OWNER, ROLE_ADMIN}:
         return _has_object_scope(user, permission_name, obj)

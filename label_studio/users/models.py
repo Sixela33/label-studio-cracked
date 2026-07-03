@@ -244,6 +244,24 @@ class User(UserMixin, AbstractBaseUser, PermissionsMixin, UserLastActivityMixin)
         return initials
 
 
+class PlatformOwner(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='platform_owner',
+        help_text='User with instance-level owner privileges.',
+    )
+    created_at = models.DateTimeField(_('created at'), auto_now_add=True)
+
+    class Meta:
+        db_table = 'platform_owner'
+        verbose_name = _('platform owner')
+        verbose_name_plural = _('platform owners')
+
+    def __str__(self):
+        return f'Platform owner: {self.user_id}'
+
+
 @receiver(post_save, sender=User)
 def init_user(sender, instance=None, created=False, **kwargs):
     if created:

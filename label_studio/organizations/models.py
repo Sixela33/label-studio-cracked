@@ -67,7 +67,12 @@ class OrganizationMember(OrganizationMemberMixin, models.Model):
 
     @cached_property
     def is_owner(self):
-        return bool(self.organization.created_by_id and self.user_id == self.organization.created_by_id)
+        if self.organization.created_by_id and self.user_id == self.organization.created_by_id:
+            return True
+
+        from core.permissions import is_platform_owner
+
+        return is_platform_owner(self.user)
 
     @cached_property
     def effective_role(self):

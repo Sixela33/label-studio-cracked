@@ -14,6 +14,17 @@ from django.urls import reverse
 from organizations.models import Organization
 
 
+def ensure_platform_owner(user):
+    from users.models import PlatformOwner
+
+    if PlatformOwner.objects.exists():
+        return
+
+    first_user = user.__class__.objects.order_by('id').first()
+    if first_user is not None:
+        PlatformOwner.objects.get_or_create(user=first_user)
+
+
 def hash_upload(instance, filename):
     filename = str(uuid.uuid4())[0:8] + '-' + filename
     return settings.AVATAR_PATH + '/' + filename
@@ -66,6 +77,8 @@ def save_user(request, next_page, user_form):
         org.add_user(user)
     else:
         org = Organization.create_organization(created_by=user, title='Label Studio')
+    ensure_platform_owner(user)
+
     user.active_organization = org
     user.save(update_fields=['active_organization'])
 

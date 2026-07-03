@@ -27,10 +27,11 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiExample, OpenApiParameter, OpenApiResponse, extend_schema
 from label_studio_sdk.label_interface.interface import LabelInterface
 from ml.serializers import MLBackendSerializer
+from organizations.models import OrganizationMember
 from projects.functions.next_task import get_next_task
 from projects.functions.stream_history import get_label_stream_history
 from projects.functions.utils import recalculate_created_annotations_and_labels_from_scratch
-from projects.models import Project, ProjectImport, ProjectManager, ProjectReimport, ProjectSummary
+from projects.models import Project, ProjectImport, ProjectManager, ProjectMember, ProjectReimport, ProjectSummary
 from projects.serializers import (
     GetFieldsSerializer,
     ProjectCountsSerializer,
@@ -415,6 +416,72 @@ class ProjectAPI(generics.RetrieveUpdateDestroyAPIView):
     @api_webhook(WebhookAction.PROJECT_UPDATED)
     def put(self, request, *args, **kwargs):
         return super(ProjectAPI, self).put(request, *args, **kwargs)
+
+
+class ProjectMembersAPI(generics.GenericAPIView):
+    permission_required = ViewClassPermission(
+        GET=all_permissions.projects_change,
+        POST=all_permissions.projects_change,
+        DELETE=all_permissions.projects_change,
+    )
+
+    def get_project(self):
+        project = generics.get_object_or_404(Project.objects.for_user(self.request.user), pk=self.kwargs['pk'])
+        self.check_object_permissions(self.request, project)
+        return project
+
+    def get(self, request, *args, **kwargs):
+        project = self.get_project()
+        project_members = {
+            member.user_id: member
+            for member in ProjectMember.objects.filter(project=project).order_by('id')
+        }
+        members = (
+            OrganizationMember.objects.filter(organization=project.organization, deleted_at__isnull=True)
+            .select_related('user')
+            .order_by('user__email')
+        )
+
+        return Response(
+            [
+                {
+                    'user': UserSimpleSerializer(member.user).data,
+                    'role': member.role,
+                    'effective_role': member.effective_role,
+                    'inherited_access': member.effective_role in {'owner', 'admin', 'manager'},
+                    'enabled': bool(project_members.get(member.user_id) and project_members[member.user_id].enabled),
+                }
+                for member in members
+            ]
+        )
+
+    def post(self, request, *args, **kwargs):
+        project = self.get_project()
+        user_id = request.data.get('user_id')
+        if not user_id:
+            raise RestValidationError({'user_id': 'This field is required.'})
+
+        user = generics.get_object_or_404(
+            User.objects.filter(om_through__organization=project.organization, om_through__deleted_at__isnull=True),
+            pk=user_id,
+        )
+        membership = ProjectMember.objects.filter(project=project, user=user).order_by('id').first()
+        if membership is None:
+            ProjectMember.objects.create(project=project, user=user, enabled=True)
+        elif not membership.enabled:
+            membership.enabled = True
+            membership.save(update_fields=['enabled', 'updated_at'])
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def delete(self, request, *args, **kwargs):
+        project = self.get_project()
+        user = generics.get_object_or_404(
+            User.objects.filter(om_through__organization=project.organization, om_through__deleted_at__isnull=True),
+            pk=kwargs['user_pk'],
+        )
+        ProjectMember.objects.filter(project=project, user=user).update(enabled=False)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # @method_decorator(

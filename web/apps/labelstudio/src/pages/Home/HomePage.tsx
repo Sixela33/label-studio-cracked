@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useUpdatePageTitle } from "@humansignal/core";
+import { ABILITY, useAuth } from "@humansignal/core/providers/AuthProvider";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { HeidiTips } from "../../components/HeidiTips/HeidiTips";
 import { useAPI } from "../../providers/ApiProvider";
@@ -67,6 +68,8 @@ export const HomePage: Page = () => {
   const setProjectsData = useSetAtom(projectsDataAtom);
   const sortedProjects = useAtomValue(sortedProjectsAtom);
   const visitedIds = useAtomValue(visitedIdsAtom);
+  const { permissions } = useAuth();
+  const canCreateProjects = permissions.can(ABILITY.can_create_projects);
 
   useUpdatePageTitle("Home");
 
@@ -144,6 +147,8 @@ export const HomePage: Page = () => {
           </div>
           <div className="flex justify-start gap-4">
             {actions.map((action) => {
+              if (action.type === "createProject" && !canCreateProjects) return null;
+
               return (
                 <Button
                   key={action.title}
@@ -177,7 +182,7 @@ export const HomePage: Page = () => {
               </div>
             ) : isError ? (
               <div className="h-64 flex justify-center items-center">can't load projects</div>
-            ) : isSuccess && data && sortedProjects.length === 0 ? (
+            ) : isSuccess && data && sortedProjects.length === 0 && canCreateProjects ? (
               <div className="flex flex-col justify-center items-center border border-primary-border-subtle bg-primary-emphasis-subtle rounded-lg h-64">
                 <div
                   className={
@@ -195,6 +200,25 @@ export const HomePage: Page = () => {
                 <Button className="mt-4" onClick={() => setModalIsOpen(true)} aria-label="Create new project">
                   Create Project
                 </Button>
+              </div>
+            ) : isSuccess && data && sortedProjects.length === 0 ? (
+              <div className="flex flex-col justify-center items-center border border-primary-border-subtle bg-primary-emphasis-subtle rounded-lg h-64">
+                <div
+                  className={
+                    "rounded-full w-12 h-12 flex justify-center items-center bg-accent-grape-subtle text-primary-icon"
+                  }
+                >
+                  <IconFolderOpen />
+                </div>
+                <Typography variant="headline" size="small">
+                  Join a project
+                </Typography>
+                <Typography size="small" className="text-neutral-content-subtler">
+                  You're ready to start labeling. Ask an admin to add you to a project.
+                </Typography>
+                <Typography size="small" className="text-neutral-content-subtler">
+                  Once you're added, your projects will appear here.
+                </Typography>
               </div>
             ) : isSuccess && data && sortedProjects.length > 0 ? (
               <div className="flex flex-col gap-1">

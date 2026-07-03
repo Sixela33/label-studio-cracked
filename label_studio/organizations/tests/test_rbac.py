@@ -1,7 +1,10 @@
+from django.contrib.sessions.middleware import SessionMiddleware
+from django.test import RequestFactory
 from organizations.models import Organization, OrganizationMember
 from projects.models import Project, ProjectMember
 from rest_framework.test import APITestCase
-from users.models import User
+from users.functions.common import save_user
+from users.models import PlatformOwner, User
 
 
 def create_user(email, organization=None):
@@ -13,6 +16,22 @@ def create_user(email, organization=None):
     return user
 
 
+class _FakeUserForm:
+    def __init__(self, user):
+        self._user = user
+        self.cleaned_data = {}
+
+    def save(self):
+        return self._user
+
+
+def run_save_user(user):
+    request = RequestFactory().post('/user/signup/')
+    SessionMiddleware(lambda r: None).process_request(request)
+    request.session.save()
+    save_user(request, None, _FakeUserForm(user))
+
+
 class TestOrganizationRBAC(APITestCase):
     @classmethod
     def setUpTestData(cls):
@@ -22,9 +41,13 @@ class TestOrganizationRBAC(APITestCase):
         cls.owner.save(update_fields=['active_organization'])
 
         cls.admin = create_user('admin@example.com', cls.organization)
+        cls.manager = create_user('manager@example.com', cls.organization)
         cls.annotator = create_user('annotator@example.com', cls.organization)
         OrganizationMember.objects.filter(user=cls.admin, organization=cls.organization).update(
             role=OrganizationMember.Role.ADMIN
+        )
+        OrganizationMember.objects.filter(user=cls.manager, organization=cls.organization).update(
+            role=OrganizationMember.Role.MANAGER
         )
 
     def test_owner_can_update_member_role(self):
@@ -47,6 +70,28 @@ class TestOrganizationRBAC(APITestCase):
 
         assert response.status_code == 403
 
+    def test_manager_cannot_create_project_by_default(self):
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post('/api/projects', {'title': 'Blocked project'}, format='json')
+
+        assert response.status_code == 403
+
+    def test_admin_can_create_project(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post('/api/projects', {'title': 'Admin project'}, format='json')
+
+        assert response.status_code == 201
+
+    def test_platform_owner_can_create_project_without_org_owner_role(self):
+        PlatformOwner.objects.create(user=self.manager)
+        self.client.force_authenticate(user=self.manager)
+
+        response = self.client.post('/api/projects', {'title': 'Platform owner project'}, format='json')
+
+        assert response.status_code == 201
+
     def test_annotator_only_sees_assigned_projects(self):
         assigned = Project.objects.create(title='assigned', organization=self.organization, created_by=self.owner)
         unassigned = Project.objects.create(title='unassigned', organization=self.organization, created_by=self.owner)
@@ -56,6 +101,43 @@ class TestOrganizationRBAC(APITestCase):
 
         assert assigned.title in titles
         assert unassigned.title not in titles
+
+    def test_admin_can_manage_project_members(self):
+        project = Project.objects.create(title='managed', organization=self.organization, created_by=self.owner)
+        self.client.force_authenticate(user=self.admin)
+
+        add_response = self.client.post(
+            f'/api/projects/{project.id}/members/',
+            {'user_id': self.annotator.id},
+            format='json',
+        )
+        list_response = self.client.get(f'/api/projects/{project.id}/members/')
+
+        assert add_response.status_code == 204
+        assert ProjectMember.objects.filter(project=project, user=self.annotator, enabled=True).exists()
+        assert list_response.status_code == 200
+        assert any(
+            member['user']['id'] == self.annotator.id and member['enabled'] for member in list_response.json()
+        )
+
+    def test_admin_can_remove_project_member(self):
+        project = Project.objects.create(title='managed', organization=self.organization, created_by=self.owner)
+        ProjectMember.objects.create(user=self.annotator, project=project)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.delete(f'/api/projects/{project.id}/members/{self.annotator.id}/')
+
+        assert response.status_code == 204
+        assert ProjectMember.objects.get(project=project, user=self.annotator).enabled is False
+
+    def test_annotator_cannot_manage_project_members(self):
+        project = Project.objects.create(title='managed', organization=self.organization, created_by=self.owner)
+        ProjectMember.objects.create(user=self.annotator, project=project)
+        self.client.force_authenticate(user=self.annotator)
+
+        response = self.client.get(f'/api/projects/{project.id}/members/')
+
+        assert response.status_code == 403
 
     def test_patch_cannot_reassign_member_user_or_organization(self):
         self.client.force_authenticate(user=self.owner)
@@ -90,3 +172,21 @@ class TestOrganizationCreatePermission(APITestCase):
         response = self.client.post('/api/organizations', {'title': 'Fresh Org'}, format='json')
 
         assert response.status_code == 201
+
+
+class TestPlatformOwnerAssignment(APITestCase):
+    def test_signup_creates_platform_owner_for_first_user(self):
+        user = User.objects.create(email='first-owner@example.com', username='first-owner')
+
+        run_save_user(user)
+
+        assert PlatformOwner.objects.filter(user=user).exists()
+
+    def test_signup_keeps_existing_first_user_as_platform_owner(self):
+        first = User.objects.create(email='first@example.com', username='first')
+        second = User.objects.create(email='second@example.com', username='second')
+
+        run_save_user(second)
+
+        assert PlatformOwner.objects.filter(user=first).exists()
+        assert not PlatformOwner.objects.filter(user=second).exists()

@@ -88,19 +88,28 @@ def custom_exception_handler(exc, context):
     :return: response with error desc
     """
     exception_id = uuid.uuid4()
-
-    sentry_skip = False
-    if isinstance(exc, APIException) and exc.status_code < 500:
-        # Skipping Sentry for non-500 unhandled exceptions
-        sentry_skip = True
-
-    logger.error(
-        '{} {}'.format(exception_id, exc),
-        exc_info=True,
-        extra={'sentry_skip': sentry_skip, 'exception_id': exception_id},
-    )
-
     exc = _override_exceptions(exc)
+
+    expected_api_exception = isinstance(exc, APIException) and exc.status_code < 500
+    sentry_skip = expected_api_exception
+    log_extra = {'sentry_skip': sentry_skip, 'exception_id': exception_id}
+
+    if expected_api_exception:
+        request = context.get('request') if context else None
+        request_info = ''
+        if request is not None:
+            request_info = ' {} {}'.format(request.method, request.get_full_path())
+
+        logger.warning(
+            '{} API exception {}{}: {}'.format(exception_id, exc.status_code, request_info, exc),
+            extra=log_extra,
+        )
+    else:
+        logger.error(
+            '{} {}'.format(exception_id, exc),
+            exc_info=True,
+            extra=log_extra,
+        )
 
     # error body structure
     response_data = {

@@ -14,6 +14,8 @@ export enum ABILITY {
   can_change_organizations = "organizations.change",
 
   // projects
+  can_create_projects = "projects.create",
+  can_change_projects = "projects.change",
   can_delete_projects = "projects.delete",
   can_reset_project_cache = "projects.reset_cache",
   can_reset_dm_views = "views.reset",

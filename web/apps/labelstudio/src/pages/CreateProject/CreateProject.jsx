@@ -138,6 +138,11 @@ export const CreateProject = ({ onClose }) => {
   );
 
   const onCreate = React.useCallback(async () => {
+    if (!project?.id) {
+      setError("You don't have permission to create projects.");
+      return;
+    }
+
     // First, persist project with label_config so import/reimport validates against it
     const response = await api.callApi("updateProject", {
       params: {
@@ -164,7 +169,7 @@ export const CreateProject = ({ onClose }) => {
   }, [project, projectBody, finishUpload]);
 
   const onSaveName = async () => {
-    if (error) return;
+    if (error || !project?.id) return;
     const res = await api.callApi("updateProjectRaw", {
       params: {
         pk: project.id,
