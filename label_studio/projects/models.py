@@ -111,7 +111,13 @@ class ProjectManager(models.Manager):
         return ProjectQuerySetWithFSM(self.model, using=self._db)
 
     def for_user(self, user):
-        return self.get_queryset().filter(organization=user.active_organization)
+        from core.permissions import get_effective_role
+
+        queryset = self.get_queryset().filter(organization=user.active_organization)
+        role = get_effective_role(user, user.active_organization)
+        if role in {'owner', 'admin', 'manager'}:
+            return queryset
+        return queryset.filter(Q(created_by=user) | Q(members__user=user, members__enabled=True)).distinct()
 
     def with_state(self):
         """

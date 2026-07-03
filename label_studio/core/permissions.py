@@ -72,6 +72,161 @@ class ViewClassPermission(BaseModel):
     POST: Optional[str] = None
 
 
+ROLE_OWNER = 'owner'
+ROLE_ADMIN = 'admin'
+ROLE_MANAGER = 'manager'
+ROLE_ANNOTATOR = 'annotator'
+
+ORG_ADMIN_PERMISSIONS = {
+    all_permissions.organizations_create,
+    all_permissions.organizations_change,
+    all_permissions.organizations_delete,
+    all_permissions.organizations_invite,
+    all_permissions.webhooks_change,
+    all_permissions.users_token_any,
+}
+
+MANAGER_PERMISSIONS = set(all_permissions.model_dump().values()) - ORG_ADMIN_PERMISSIONS
+
+ANNOTATOR_PERMISSIONS = {
+    all_permissions.projects_view,
+    all_permissions.tasks_view,
+    all_permissions.annotations_view,
+    all_permissions.annotations_create,
+    all_permissions.annotations_change,
+    all_permissions.views_view,
+    all_permissions.views_create,
+    all_permissions.views_change,
+    all_permissions.labels_view,
+    all_permissions.avatar_any,
+}
+
+
+def _organization_from_obj(obj):
+    if obj is None:
+        return None
+    if obj.__class__.__name__ == 'Organization':
+        return obj
+    if obj.__class__.__name__ == 'OrganizationMember':
+        return obj.organization
+    if hasattr(obj, 'organization'):
+        return obj.organization
+    if hasattr(obj, 'project') and hasattr(obj.project, 'organization'):
+        return obj.project.organization
+    if hasattr(obj, 'task') and hasattr(obj.task, 'project'):
+        return obj.task.project.organization
+    return None
+
+
+def get_membership(user, organization=None):
+    if not getattr(user, 'is_authenticated', False):
+        return None
+
+    organization = organization or getattr(user, 'active_organization', None)
+    if organization is None:
+        return None
+
+    # Per-instance cache avoids N+1 queries when many permissions are
+    # checked for the same user in one request (e.g. whoami's permissions list).
+    cache = user.__dict__.setdefault('_org_membership_cache', {})
+    if organization.pk in cache:
+        return cache[organization.pk]
+
+    from organizations.models import OrganizationMember
+
+    membership = (
+        OrganizationMember.objects.filter(user=user, organization=organization, deleted_at__isnull=True)
+        .select_related('organization')
+        .first()
+    )
+    cache[organization.pk] = membership
+    return membership
+
+
+def get_effective_role(user, organization=None):
+    membership = get_membership(user, organization)
+    if not membership:
+        return None
+    return membership.effective_role
+
+
+def is_org_admin(user, organization=None):
+    return get_effective_role(user, organization) in {ROLE_OWNER, ROLE_ADMIN}
+
+
+def is_project_member(user, project):
+    if not project or not getattr(user, 'is_authenticated', False):
+        return False
+    if project.created_by_id == user.id:
+        return True
+    return project.members.filter(user=user, enabled=True).exists()
+
+
+def has_project_access(user, project):
+    if not project or not getattr(user, 'is_authenticated', False):
+        return False
+
+    organization = project.organization
+    role = get_effective_role(user, organization)
+    if role in {ROLE_OWNER, ROLE_ADMIN, ROLE_MANAGER}:
+        return True
+    if role == ROLE_ANNOTATOR:
+        return is_project_member(user, project)
+    return False
+
+
+def _project_from_obj(obj):
+    if obj is None:
+        return None
+    if obj.__class__.__name__ == 'Project':
+        return obj
+    if hasattr(obj, 'project'):
+        return obj.project
+    if hasattr(obj, 'task') and hasattr(obj.task, 'project'):
+        return obj.task.project
+    return None
+
+
+def _has_object_scope(user, permission_name, obj):
+    project = _project_from_obj(obj)
+    if project is not None and not has_project_access(user, project):
+        return False
+
+    if permission_name in {all_permissions.annotations_change, all_permissions.annotations_delete}:
+        if obj is not None and obj.__class__.__name__ == 'Annotation':
+            role = get_effective_role(user, obj.project.organization)
+            if role == ROLE_ANNOTATOR:
+                return obj.completed_by_id == user.id
+
+    organization = _organization_from_obj(obj)
+    if organization is not None:
+        return get_membership(user, organization) is not None
+
+    return True
+
+
+def role_has_permission(permission_name, user, obj=None):
+    if not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+
+    organization = _organization_from_obj(obj) or getattr(user, 'active_organization', None)
+    role = get_effective_role(user, organization)
+
+    if organization is None and permission_name == all_permissions.organizations_create:
+        # Authenticated users can create their first organization before they belong to one.
+        return True
+
+    if role in {ROLE_OWNER, ROLE_ADMIN}:
+        return _has_object_scope(user, permission_name, obj)
+    if role == ROLE_MANAGER:
+        return permission_name in MANAGER_PERMISSIONS and _has_object_scope(user, permission_name, obj)
+    if role == ROLE_ANNOTATOR:
+        return permission_name in ANNOTATOR_PERMISSIONS and _has_object_scope(user, permission_name, obj)
+    return False
+
+
 def make_perm(name, pred, overwrite=False):
     if rules.perm_exists(name):
         if overwrite:
@@ -81,5 +236,12 @@ def make_perm(name, pred, overwrite=False):
     rules.add_perm(name, pred)
 
 
+def make_role_predicate(permission_name):
+    def predicate(user, obj=None):
+        return role_has_permission(permission_name, user, obj)
+
+    return predicate
+
+
 for _, permission_name in all_permissions:
-    make_perm(permission_name, rules.is_authenticated)
+    make_perm(permission_name, make_role_predicate(permission_name), overwrite=True)

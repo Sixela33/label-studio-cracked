@@ -14,12 +14,19 @@ import { IconPlus } from "@humansignal/icons";
 import { useToast } from "@humansignal/ui";
 import { InviteLink } from "./InviteLink";
 import { SelectedUser } from "./SelectedUser";
+import { useAPI } from "../../../providers/ApiProvider";
+import { ABILITY, useAuth } from "@humansignal/core/providers/AuthProvider";
 
 export const PeoplePage = () => {
   const apiSettingsModal = useRef();
   const toast = useToast();
+  const api = useAPI();
+  const { user: currentUser, permissions } = useAuth();
+  const activeOrganizationId = currentUser?.active_organization;
+  const canManageRoles = permissions.can(ABILITY.can_change_organizations);
   const [selectedUser, setSelectedUser] = useState(null);
   const [invitationOpen, setInvitationOpen] = useState(false);
+  const [peopleRefreshKey, setPeopleRefreshKey] = useState(0);
 
   useUpdatePageTitle("People");
 
@@ -45,13 +52,33 @@ export const PeoplePage = () => {
         />
       ),
     }),
-    [],
+    [toast],
   );
 
   const showApiTokenSettingsModal = useCallback(() => {
     apiSettingsModal.current = modal(apiTokensSettingsModalProps);
     __lsa("organization.token_settings");
   }, [apiTokensSettingsModalProps]);
+
+  const updateRole = useCallback(
+    async (user, role) => {
+      if (!activeOrganizationId) return;
+
+      const updated = await api.callApi("updateUserMembership", {
+        params: {
+          pk: activeOrganizationId,
+          userPk: user.id,
+        },
+        body: { role },
+      });
+      const nextUser = { ...user, role: updated.role, effective_role: updated.effective_role };
+
+      setSelectedUser(nextUser);
+      setPeopleRefreshKey((key) => key + 1);
+      toast.show({ message: "Member role updated" });
+    },
+    [activeOrganizationId, api, toast],
+  );
 
   const defaultSelected = useMemo(() => {
     return localStorage.getItem("selectedUser");
@@ -64,18 +91,20 @@ export const PeoplePage = () => {
           <Space />
 
           <Space>
-            {isFF(FF_AUTH_TOKENS) && (
+            {canManageRoles && isFF(FF_AUTH_TOKENS) && (
               <Button look="outlined" onClick={showApiTokenSettingsModal} aria-label="Show API token settings">
                 API Tokens Settings
               </Button>
             )}
-            <Button
-              leading={<IconPlus className="!h-4" />}
-              onClick={() => setInvitationOpen(true)}
-              aria-label="Invite new member"
-            >
-              Add Members
-            </Button>
+            {canManageRoles && (
+              <Button
+                leading={<IconPlus className="!h-4" />}
+                onClick={() => setInvitationOpen(true)}
+                aria-label="Invite new member"
+              >
+                Add Members
+              </Button>
+            )}
           </Space>
         </Space>
       </div>
@@ -83,11 +112,18 @@ export const PeoplePage = () => {
         <PeopleList
           selectedUser={selectedUser}
           defaultSelected={defaultSelected}
+          activeOrganizationId={activeOrganizationId}
+          refreshKey={peopleRefreshKey}
           onSelect={(user) => selectUser(user)}
         />
 
         {selectedUser ? (
-          <SelectedUser user={selectedUser} onClose={() => selectUser(null)} />
+          <SelectedUser
+            user={selectedUser}
+            canManageRoles={canManageRoles}
+            onRoleChange={updateRole}
+            onClose={() => selectUser(null)}
+          />
         ) : (
           isFF(FF_LSDV_E_297) && <HeidiTips collection="organizationPage" />
         )}

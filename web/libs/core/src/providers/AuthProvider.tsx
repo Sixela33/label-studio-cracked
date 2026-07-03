@@ -10,6 +10,9 @@ export enum ABILITY {
   // webhooks
   can_change_webhooks = "webhooks.change",
 
+  // organizations
+  can_change_organizations = "organizations.change",
+
   // projects
   can_delete_projects = "projects.delete",
   can_reset_project_cache = "projects.reset_cache",

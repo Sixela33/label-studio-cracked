@@ -108,7 +108,7 @@ class BaseWhoAmIUserSerializer(BaseUserSerializer):
         fields = BaseUserSerializer.Meta.fields + ('permissions',)
 
     def get_permissions(self, user) -> list[str]:
-        return [perm for _, perm in all_permissions]
+        return [perm for _, perm in all_permissions if user.has_perm(perm)]
 
 
 class UserSimpleSerializer(BaseUserSerializer):

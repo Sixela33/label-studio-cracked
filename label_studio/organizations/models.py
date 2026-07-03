@@ -18,6 +18,11 @@ OrganizationMemberMixin = load_func(settings.ORGANIZATION_MEMBER_MIXIN)
 class OrganizationMember(OrganizationMemberMixin, models.Model):
     """ """
 
+    class Role(models.TextChoices):
+        ADMIN = 'admin', _('Admin')
+        MANAGER = 'manager', _('Manager')
+        ANNOTATOR = 'annotator', _('Annotator')
+
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='om_through', help_text='User ID'
     )
@@ -38,6 +43,15 @@ class OrganizationMember(OrganizationMemberMixin, models.Model):
         'If NULL, the member is not considered deleted.',
     )
 
+    role = models.CharField(
+        _('role'),
+        max_length=32,
+        choices=Role.choices,
+        default=Role.ANNOTATOR,
+        db_index=True,
+        help_text='Organization role used for role-based access control.',
+    )
+
     # objects = OrganizationMemberQuerySet.as_manager()
 
     @classmethod
@@ -53,7 +67,19 @@ class OrganizationMember(OrganizationMemberMixin, models.Model):
 
     @cached_property
     def is_owner(self):
-        return self.user.id == self.organization.created_by.id
+        return bool(self.organization.created_by_id and self.user_id == self.organization.created_by_id)
+
+    @cached_property
+    def effective_role(self):
+        return 'owner' if self.is_owner else self.role
+
+    @cached_property
+    def can_manage_roles(self):
+        return self.effective_role in {'owner', self.Role.ADMIN}
+
+    @cached_property
+    def can_manage_projects(self):
+        return self.effective_role in {'owner', self.Role.ADMIN, self.Role.MANAGER}
 
     class Meta:
         ordering = ['pk']
@@ -143,7 +169,7 @@ class Organization(OrganizationMixin, models.Model):
             return
 
         with transaction.atomic():
-            om = OrganizationMember(user=user, organization=self)
+            om = OrganizationMember(user=user, organization=self, role=OrganizationMember.Role.ANNOTATOR)
             om.save()
 
             return om

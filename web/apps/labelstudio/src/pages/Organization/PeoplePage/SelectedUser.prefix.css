@@ -44,6 +44,10 @@
     }
   }
 
+  &__role {
+    text-transform: capitalize;
+  }
+
   &__last-active {
     color: var(--color-neutral-content-subtler);
     margin-top: 32px;

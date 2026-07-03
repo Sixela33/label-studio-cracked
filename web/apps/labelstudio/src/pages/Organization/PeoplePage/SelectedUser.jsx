@@ -2,6 +2,7 @@ import { format } from "date-fns";
 import { NavLink } from "react-router-dom";
 import { IconCross } from "@humansignal/icons";
 import { Userpic, Button } from "@humansignal/ui";
+import { useState } from "react";
 import { cn } from "../../../utils/bem";
 import "./SelectedUser.prefix.css";
 
@@ -22,11 +23,26 @@ const UserProjectsLinks = ({ projects }) => {
   );
 };
 
-export const SelectedUser = ({ user, onClose }) => {
+export const SelectedUser = ({ user, canManageRoles, onRoleChange, onClose }) => {
   const fullName = [user.first_name, user.last_name]
     .filter((n) => !!n)
     .join(" ")
     .trim();
+
+  const [savingRole, setSavingRole] = useState(false);
+  const effectiveRole = user.effective_role || user.role;
+  const canEditRole = canManageRoles && effectiveRole !== "owner";
+
+  const changeRole = async (event) => {
+    const role = event.target.value;
+
+    setSavingRole(true);
+    try {
+      await onRoleChange?.(user, role);
+    } finally {
+      setSavingRole(false);
+    }
+  };
 
   return (
     <div className={cn("user-info").toClassName()}>
@@ -52,6 +68,19 @@ export const SelectedUser = ({ user, onClose }) => {
           <a href={`tel:${user.phone}`}>{user.phone}</a>
         </div>
       )}
+
+      <div className={cn("user-info").elem("section").toClassName()}>
+        <div className={cn("user-info").elem("section-title").toClassName()}>Role</div>
+        {canEditRole ? (
+          <select value={user.role} disabled={savingRole} onChange={changeRole} aria-label="Member role">
+            <option value="admin">Admin</option>
+            <option value="manager">Manager</option>
+            <option value="annotator">Annotator</option>
+          </select>
+        ) : (
+          <span className={cn("user-info").elem("role").toClassName()}>{effectiveRole}</span>
+        )}
+      </div>
 
       {!!user.created_projects.length && (
         <div className={cn("user-info").elem("section").toClassName()}>

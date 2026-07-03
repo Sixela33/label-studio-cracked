@@ -267,19 +267,20 @@ class OrganizationMemberListAPI(generics.ListAPIView):
         },
     ),
 )
-class OrganizationMemberDetailAPI(GetParentObjectMixin, generics.RetrieveDestroyAPIView):
+class OrganizationMemberDetailAPI(GetParentObjectMixin, generics.RetrieveUpdateDestroyAPIView):
     permission_required = ViewClassPermission(
         GET=all_permissions.organizations_view,
+        PATCH=all_permissions.organizations_change,
         DELETE=all_permissions.organizations_change,
     )
     parent_queryset = Organization.objects.all()
     parser_classes = (JSONParser, FormParser, MultiPartParser)
     serializer_class = OrganizationMemberSerializer
-    http_method_names = ['delete', 'get']
+    http_method_names = ['delete', 'get', 'patch']
 
     @property
     def permission_classes(self):
-        if self.request.method == 'DELETE':
+        if self.request.method in {'DELETE', 'PATCH'}:
             return [IsAuthenticated, HasObjectPermission]
         return api_settings.DEFAULT_PERMISSION_CLASSES
 
@@ -300,6 +301,27 @@ class OrganizationMemberDetailAPI(GetParentObjectMixin, generics.RetrieveDestroy
         serializer = self.get_serializer(member)
         return Response(serializer.data)
 
+    def patch(self, request, pk=None, user_pk=None):
+        org = self.parent_object
+        if org != request.user.active_organization:
+            raise PermissionDenied('You can update members only for your current active organization')
+
+        from core.permissions import is_org_admin
+
+        if not is_org_admin(request.user, org):
+            raise PermissionDenied('Only organization owners and admins can update member roles')
+
+        member = get_object_or_404(OrganizationMember, user_id=user_pk, organization=org, deleted_at__isnull=True)
+        if member.is_owner:
+            raise PermissionDenied('The organization owner role cannot be changed')
+        if member.user_id == request.user.id:
+            raise PermissionDenied('Users cannot change their own role')
+
+        serializer = self.get_serializer(member, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
     def delete(self, request, pk=None, user_pk=None):
         org = self.parent_object
         if org != request.user.active_organization:
@@ -310,6 +332,8 @@ class OrganizationMemberDetailAPI(GetParentObjectMixin, generics.RetrieveDestroy
         if member.deleted_at is not None:
             raise NotFound('Member not found')
 
+        if member.is_owner:
+            raise PermissionDenied('The organization owner cannot be removed')
         if member.user_id == request.user.id:
             return Response({'detail': 'User cannot soft delete self'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
