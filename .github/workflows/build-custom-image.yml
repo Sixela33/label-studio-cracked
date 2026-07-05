@@ -11,7 +11,9 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Cold build of the full multi-stage image takes ~50min; the cap must exceed
+    # that so at least one run finishes and populates the gha cache.
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -43,4 +45,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=min
+          # mode=max caches intermediate stages (e.g. the frontend build) so
+          # subsequent builds reuse them instead of rebuilding from scratch.
+          cache-to: type=gha,mode=max
