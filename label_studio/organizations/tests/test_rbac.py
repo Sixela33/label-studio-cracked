@@ -155,6 +155,48 @@ class TestOrganizationRBAC(APITestCase):
         assert member.user_id == self.annotator.id
         assert member.organization_id == self.organization.id
 
+    def test_annotator_can_list_users_of_assigned_project(self):
+        from tasks.models import Annotation, Task
+
+        project = Project.objects.create(title='scoped', organization=self.organization, created_by=self.owner)
+        ProjectMember.objects.create(user=self.annotator, project=project)
+        # A contributor who annotated the project but is NOT a project member.
+        contributor = create_user('contributor@example.com', self.organization)
+        task = Task.objects.create(project=project, data={})
+        Annotation.objects.create(task=task, project=project, completed_by=contributor)
+        self.client.force_authenticate(user=self.annotator)
+
+        response = self.client.get(f'/api/users/?project={project.id}')
+
+        assert response.status_code == 200
+        returned_ids = {user['id'] for user in response.json()}
+        assert self.annotator.id in returned_ids  # assigned member
+        assert contributor.id in returned_ids  # annotation author
+        assert self.admin.id not in returned_ids  # non-participant excluded
+
+    def test_annotator_cannot_list_users_of_unassigned_project(self):
+        project = Project.objects.create(title='other', organization=self.organization, created_by=self.owner)
+        self.client.force_authenticate(user=self.annotator)
+
+        response = self.client.get(f'/api/users/?project={project.id}')
+
+        assert response.status_code == 403
+
+    def test_annotator_cannot_list_users_without_project_scope(self):
+        self.client.force_authenticate(user=self.annotator)
+
+        response = self.client.get('/api/users/')
+
+        assert response.status_code == 403
+
+    def test_admin_can_list_users_of_project(self):
+        project = Project.objects.create(title='admin-scoped', organization=self.organization, created_by=self.owner)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(f'/api/users/?project={project.id}')
+
+        assert response.status_code == 200
+
     def test_owner_cannot_be_soft_deleted(self):
         self.client.force_authenticate(user=self.admin)
 

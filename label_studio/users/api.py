@@ -3,13 +3,15 @@
 import logging
 
 from core.permissions import ViewClassPermission, all_permissions
+from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import generics, viewsets
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import action
-from rest_framework.exceptions import MethodNotAllowed
+from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -169,17 +171,46 @@ _user_schema = {
 )
 class UserAPI(viewsets.ModelViewSet):
     serializer_class = UserSerializer
-    permission_required = ViewClassPermission(
-        GET=all_permissions.organizations_change,
-        PUT=all_permissions.organizations_change,
-        POST=all_permissions.organizations_change,
-        PATCH=all_permissions.organizations_view,
-        DELETE=all_permissions.organizations_change,
-    )
     http_method_names = ['get', 'post', 'head', 'patch', 'delete']
 
+    @property
+    def permission_required(self):
+        # A project-scoped list (used by the Data Manager grid to resolve annotator
+        # names) is allowed for anyone with project access; membership is enforced in
+        # get_queryset. The org-wide list stays admin-only.
+        if getattr(self, 'request', None) and self.request.query_params.get('project'):
+            return ViewClassPermission(
+                GET=all_permissions.projects_view,
+                PUT=all_permissions.organizations_change,
+                POST=all_permissions.organizations_change,
+                PATCH=all_permissions.organizations_view,
+                DELETE=all_permissions.organizations_change,
+            )
+        return ViewClassPermission(
+            GET=all_permissions.organizations_change,
+            PUT=all_permissions.organizations_change,
+            POST=all_permissions.organizations_change,
+            PATCH=all_permissions.organizations_view,
+            DELETE=all_permissions.organizations_change,
+        )
+
     def get_queryset(self):
-        return User.objects.filter(organizations=self.request.user.active_organization)
+        org = self.request.user.active_organization
+        qs = User.objects.filter(organizations=org)
+        project_id = self.request.query_params.get('project')
+        if project_id:
+            from core.permissions import has_project_access
+            from projects.models import Project
+            from tasks.models import Annotation
+
+            project = get_object_or_404(Project, pk=project_id, organization=org)
+            if not has_project_access(self.request.user, project):
+                raise PermissionDenied()
+            # Scope to project participants: assigned members + users who annotated it.
+            member_ids = project.members.values_list('user_id', flat=True)
+            annotator_ids = Annotation.objects.filter(project=project).values_list('completed_by_id', flat=True)
+            qs = qs.filter(Q(id__in=member_ids) | Q(id__in=annotator_ids))
+        return qs
 
     @extend_schema(exclude=True)
     @action(detail=True, methods=['delete', 'post'], permission_required=all_permissions.avatar_any)

@@ -1,7 +1,6 @@
 # syntax=docker/dockerfile:1
 ARG NODE_VERSION=22
 ARG PYTHON_VERSION=3.13
-ARG POETRY_VERSION=2.3.2
 ARG VERSION_OVERRIDE
 ARG BRANCH_OVERRIDE
 
@@ -61,20 +60,12 @@ RUN --mount=type=cache,target=/root/web/.yarn,id=yarn-cache,sharing=locked \
 
 ################################ Stage: venv-builder (prepare the virtualenv)
 FROM python:${PYTHON_VERSION}-alpine AS venv-builder
-ARG POETRY_VERSION
 ARG PYTHON_VERSION
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=off \
-    PIP_DISABLE_PIP_VERSION_CHECK=on \
-    PIP_DEFAULT_TIMEOUT=100 \
-    PIP_CACHE_DIR="/.cache" \
-    POETRY_CACHE_DIR="/.poetry-cache" \
-    POETRY_HOME="/opt/poetry" \
-    POETRY_VIRTUALENVS_IN_PROJECT=true \
-    POETRY_VIRTUALENVS_PREFER_ACTIVE_PYTHON=true \
-    PATH="/opt/poetry/bin:$PATH"
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
 
 RUN apk add --no-cache \
     build-base \
@@ -83,8 +74,8 @@ RUN apk add --no-cache \
     python3-dev \
     pcre2-dev
 
-ADD https://install.python-poetry.org /tmp/install-poetry.py
-RUN python /tmp/install-poetry.py
+# uv replaces poetry as the resolver/installer. ponytail: pin :latest to a version if reproducibility bites.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /label-studio
 
@@ -94,25 +85,21 @@ ENV PATH="$VENV_PATH/bin:$PATH"
 ## Starting from this line all packages will be installed in $VENV_PATH
 
 # Copy dependency files
-COPY pyproject.toml poetry.lock README.md ./
+COPY pyproject.toml uv.lock README.md ./
 
-# Set a default build argument for including dev dependencies
-ARG INCLUDE_DEV=false
-
-# Install dependencies
-RUN --mount=type=cache,target=/.poetry-cache,id=poetry-cache-alpine,sharing=locked \
-    poetry check --lock && \
-    if [ "$INCLUDE_DEV" = "true" ]; then \
-        poetry install --no-root --extras uwsgi --with test; \
-    else \
-        poetry install --no-root --without test --extras uwsgi; \
-    fi
+# Install dependencies (uv, honoring uv.lock; the project itself is installed after the source COPY below).
+# ponytail: dropped the old INCLUDE_DEV/test-group branch — test deps live in [tool.poetry.group.test],
+# which is not a uv dependency-group, and the production image never sets INCLUDE_DEV=true.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --extra uwsgi
 
 # Install LS
+# ponytail: force source layers to rebuild past a stale local buildkit cache; pass --build-arg LS_CACHEBUST=$(date +%s)
+ARG LS_CACHEBUST=0
+RUN echo "cachebust=$LS_CACHEBUST"
 COPY label_studio label_studio
-RUN --mount=type=cache,target=/.poetry-cache,id=poetry-cache-alpine,sharing=locked \
-    # `--extras uwsgi` is mandatory here due to poetry bug: https://github.com/python-poetry/poetry/issues/7302
-    poetry install --only-root --extras uwsgi && \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --extra uwsgi && \
     python3 label_studio/manage.py collectstatic --no-input
 
 ################################ Stage: py-version-generator
@@ -122,7 +109,7 @@ ARG BRANCH_OVERRIDE
 
 # Create version_.py and ls-version_.py
 RUN --mount=type=bind,source=.git,target=./.git \
-    VERSION_OVERRIDE=${VERSION_OVERRIDE} BRANCH_OVERRIDE=${BRANCH_OVERRIDE} poetry run python label_studio/core/version.py
+    VERSION_OVERRIDE=${VERSION_OVERRIDE} BRANCH_OVERRIDE=${BRANCH_OVERRIDE} python label_studio/core/version.py
 
 ################################### Stage: prod
 FROM python:${PYTHON_VERSION}-alpine AS production
@@ -156,7 +143,7 @@ COPY --chown=1001:0 deploy/default.conf /etc/nginx/nginx.conf
 
 # Copy essential files for installing Label Studio and its dependencies
 COPY --chown=1001:0 pyproject.toml .
-COPY --chown=1001:0 poetry.lock .
+COPY --chown=1001:0 uv.lock .
 COPY --chown=1001:0 README.md .
 COPY --chown=1001:0 LICENSE LICENSE
 COPY --chown=1001:0 licenses licenses
