@@ -200,10 +200,16 @@ export default types
     if (Array.isArray(sn.customButtons)) {
       sn.customButtons = { _replace: sn.customButtons };
     }
+    // Default Auto-Annotation ON for interactive projects (those exposing the
+    // "auto-annotation" interface, added only when an interactive ML backend is
+    // connected). An explicit user choice, persisted in localStorage, still wins.
+    const storedAutoAnnotation = localStorage.getItem("autoAnnotation");
+    const storedAutoAccept = localStorage.getItem("autoAcceptSuggestions");
+    const hasAutoAnnotation = Array.isArray(sn.interfaces) && sn.interfaces.includes("auto-annotation");
     return {
       ...sn,
-      _autoAnnotation: localStorage.getItem("autoAnnotation") === "true",
-      _autoAcceptSuggestions: localStorage.getItem("autoAcceptSuggestions") === "true",
+      _autoAnnotation: storedAutoAnnotation !== null ? storedAutoAnnotation === "true" : hasAutoAnnotation,
+      _autoAcceptSuggestions: storedAutoAccept !== null ? storedAutoAccept === "true" : hasAutoAnnotation,
     };
   })
   .volatile(() => ({

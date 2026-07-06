@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Circle, Group, Image, Layer, Rect } from "react-konva";
-import { IconCheck, IconCross } from "@humansignal/icons";
+import { Circle, Group, Image, Rect } from "react-konva";
 import Konva from "konva";
 import chroma from "chroma-js";
 import { observer } from "mobx-react";
 import { isDefined } from "../../utils/utilities";
+import ReactDOMServer from "react-dom/server";
+import React from "react";
+import { IconCheck, IconCross } from "@humansignal/icons";
 
 const getItemPosition = (item) => {
   const { shapeRef: shape, bboxCoordsCanvas: bbox } = item;
@@ -53,7 +55,11 @@ export const SuggestionControls = observer(({ item, useLayer }) => {
           scaleY: scale,
         };
 
-    const layerPosition = useLayer
+    // When useLayer is set (brush regions), the controls used to render into their own <Layer>.
+    // But this component is already mounted inside a Layer (RegionsLayer), and Konva forbids a
+    // Layer nested in a Layer ("You may only add groups and shapes to a layer"). A Group carries
+    // the same x/y/scale transform and is legal inside a Layer.
+    const wrapperPosition = useLayer
       ? {
           x: position.x,
           y: position.y,
@@ -73,37 +79,34 @@ export const SuggestionControls = observer(({ item, useLayer }) => {
         <Rect x={0} y={0} width={64} height={32} fill="#000" cornerRadius={16} />
         <ControlButton
           onClick={() => item.annotation.rejectSuggestion(item.id)}
-          fill="#DD0000"
-          iconColor="#fff"
+          fill="#CC5E46"
+          iconColor="#FFFFFF"
           icon={IconCross}
         />
         <ControlButton
           x={32}
           onClick={() => item.annotation.acceptSuggestion(item.id)}
-          fill="#98C84E"
-          iconColor="#fff"
+          fill="#287A72"
+          iconColor="#FFFFFF"
           icon={IconCheck}
         />
       </Group>
     );
 
-    return useLayer ? (
-      <Layer {...size} {...layerPosition}>
-        {content}
-      </Layer>
-    ) : (
-      content
-    );
+    return useLayer ? <Group {...wrapperPosition}>{content}</Group> : content;
   }
   return null;
 });
 
 const ControlButton = ({ x = 0, fill, iconColor, onClick, icon }) => {
   const [img, setImg] = useState(new window.Image());
-  const imageSize = 16;
+  const imageSize = 20;
   const imageOffset = 32 / 2 - imageSize / 2;
-  const color = chroma(iconColor ?? "#fff");
+  const color = chroma(iconColor ?? "#FFFFFF");
   const [hovered, setHovered] = useState(false);
+  const [animatedOpacity, setAnimatedOpacity] = useState(0.2);
+  const [animatedFill, setAnimatedFill] = useState("#fff");
+  const animationRef = React.useRef();
 
   useEffect(() => {
     const iconImage = new window.Image();
@@ -111,10 +114,43 @@ const ControlButton = ({ x = 0, fill, iconColor, onClick, icon }) => {
     iconImage.onload = () => {
       setImg(iconImage);
     };
-    iconImage.width = 12;
-    iconImage.height = 12;
-    iconImage.src = icon;
-  }, [icon]);
+    iconImage.width = 20;
+    iconImage.height = 20;
+
+    const iconElement = React.createElement(icon, { color: iconColor, width: 20, height: 20 });
+    const svgString = ReactDOMServer.renderToStaticMarkup(iconElement);
+    const base64 = btoa(decodeURIComponent(encodeURIComponent(svgString)));
+    iconImage.src = `data:image/svg+xml;base64,${base64}`;
+  }, [icon, iconColor]);
+
+  useEffect(() => {
+    let start;
+    const duration = 150; // ms
+    const easeOut = (t) => 1 - (1 - t) ** 2;
+    const fromOpacity = animatedOpacity;
+    const toOpacity = hovered ? 1 : 0.2;
+    const fromFill = chroma(animatedFill);
+    const toFill = chroma(hovered ? fill : "#fff");
+
+    function animate(now) {
+      if (!start) start = now;
+      const elapsed = now - start;
+      const t = Math.min(1, elapsed / duration);
+      const eased = easeOut(t);
+      setAnimatedOpacity(fromOpacity + (toOpacity - fromOpacity) * eased);
+      setAnimatedFill(chroma.mix(fromFill, toFill, eased, "rgb").hex());
+      if (t < 1) {
+        animationRef.current = requestAnimationFrame(animate);
+      } else {
+        setAnimatedOpacity(toOpacity);
+        setAnimatedFill(toFill.hex());
+      }
+    }
+    cancelAnimationFrame(animationRef.current);
+    animationRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hovered, fill]);
 
   const applyFilter = useCallback(
     /**
@@ -142,10 +178,24 @@ const ControlButton = ({ x = 0, fill, iconColor, onClick, icon }) => {
       width={32}
       height={32}
       onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseEnter={(e) => {
+        setHovered(true);
+        // Set cursor to pointer
+        const stage = e.target.getStage();
+        if (stage && stage.container()) {
+          stage.container().style.cursor = "pointer";
+        }
+      }}
+      onMouseLeave={(e) => {
+        setHovered(false);
+        // Reset cursor
+        const stage = e.target.getStage();
+        if (stage && stage.container()) {
+          stage.container().style.cursor = "";
+        }
+      }}
     >
-      <Circle x={16} y={16} radius={14} opacity={hovered ? 1 : 0.2} fill={hovered ? fill : "#fff"} />
+      <Circle x={16} y={16} radius={14} opacity={animatedOpacity} fill={animatedFill} />
       <Image
         ref={(node) => applyFilter(node)}
         x={imageOffset}
