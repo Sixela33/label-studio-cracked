@@ -198,7 +198,8 @@ const Model = types
       if (!labels.selectedLabels.length && !self.selected) {
         // unselect other tools if they exist and selected
         const manager = ToolsManager.getInstance({ name: self.parent.toname });
-        const tool = Object.values(self.parent?.tools || {})[0];
+        const baseTool = Object.values(self.parent?.tools || {})[0];
+        const tool = baseTool?.control?.smartEnabled ? (manager.findSmartTool(baseTool.control) ?? baseTool) : baseTool;
 
         const selectedTool = manager.findSelectedTool();
         const sameType = tool && selectedTool ? getType(selectedTool).name === getType(tool).name : false;

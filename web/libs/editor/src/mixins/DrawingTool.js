@@ -11,7 +11,7 @@ const DrawingTool = types
   .model("DrawingTool", {
     default: true,
     mode: types.optional(types.enumeration(["drawing", "viewing"]), "viewing"),
-    unselectRegionOnToolChange: true,
+    unselectRegionOnToolChange: false,
     isDrawingTool: true,
   })
   .volatile(() => {

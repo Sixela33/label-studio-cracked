@@ -141,7 +141,7 @@ export default types
 
     sortOrder: types.optional(
       types.enumeration(["asc", "desc"]),
-      () => window.localStorage.getItem(localStorageKeys.sortDirection) ?? "asc",
+      () => window.localStorage.getItem(localStorageKeys.sortDirection) ?? "desc",
     ),
 
     group: types.optional(

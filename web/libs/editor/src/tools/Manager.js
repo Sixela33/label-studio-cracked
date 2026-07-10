@@ -187,6 +187,10 @@ class ToolsManager {
     return Object.values(this.tools).find((t) => t.isDrawing);
   }
 
+  findSmartTool(control) {
+    return Object.values(this.tools).find((t) => t.control === control && t.dynamic);
+  }
+
   /**
    * Release the active drawing tool's in-progress state without modifying the
    * region itself (the region may already be submitted). Delegates to the
