@@ -6,9 +6,12 @@ from core.feature_flags import flag_set
 from core.mixins import GetParentObjectMixin
 from core.utils.common import load_func
 from django.conf import settings
+from django.contrib.auth.tokens import default_token_generator
 from django.urls import reverse
 from django.utils.decorators import method_decorator
+from django.utils.encoding import force_bytes
 from django.utils.functional import cached_property
+from django.utils.http import urlsafe_base64_encode
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from organizations.models import Organization, OrganizationMember
@@ -339,6 +342,65 @@ class OrganizationMemberDetailAPI(GetParentObjectMixin, generics.RetrieveUpdateD
 
         member.soft_delete()
         return Response(status=204)  # 204 No Content is a common HTTP status for successful delete requests
+
+
+@method_decorator(
+    name='post',
+    decorator=extend_schema(
+        tags=['Organizations'],
+        summary='Reset member password',
+        description='Generate a one-time password-reset link for an organization member. '
+        'The link must be shared with the member manually and self-invalidates once used or after it expires.',
+        parameters=[
+            OpenApiParameter(
+                name='user_pk',
+                type=OpenApiTypes.INT,
+                location='path',
+                description='A unique integer value identifying the user whose password will be reset.',
+            ),
+        ],
+        responses={
+            200: OpenApiResponse(description='One-time password-reset link generated successfully.'),
+            403: OpenApiResponse(description='Only organization owners and admins can reset member passwords'),
+            404: OpenApiResponse(description='Member not found'),
+        },
+        extensions={
+            'x-fern-sdk-group-name': ['organizations', 'members'],
+            'x-fern-sdk-method-name': 'reset_password',
+            'x-fern-audiences': ['public'],
+        },
+    ),
+)
+class OrganizationMemberResetPasswordAPI(GetParentObjectMixin, APIView):
+    permission_required = all_permissions.organizations_change
+    parent_queryset = Organization.objects.all()
+    parent_lookup_field = 'pk'
+    parent_lookup_url_kwarg = 'pk'
+    parser_classes = (JSONParser,)
+
+    def post(self, request, pk=None, user_pk=None):
+        org = self.parent_object
+        if org != request.user.active_organization:
+            raise PermissionDenied('You can reset passwords only for members of your current active organization')
+
+        from core.permissions import is_org_admin
+
+        if not is_org_admin(request.user, org):
+            raise PermissionDenied('Only organization owners and admins can reset member passwords')
+
+        member = get_object_or_404(OrganizationMember, user_id=user_pk, organization=org, deleted_at__isnull=True)
+        if member.is_owner:
+            raise PermissionDenied('The organization owner password cannot be reset by an admin')
+        if member.user_id == request.user.id:
+            raise PermissionDenied('Use the account settings page to change your own password')
+
+        user = member.user
+        uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        reset_url = reverse('user-reset-password', kwargs={'uidb64': uidb64, 'token': token})
+        if hasattr(settings, 'FORCE_SCRIPT_NAME') and settings.FORCE_SCRIPT_NAME:
+            reset_url = reset_url.replace(settings.FORCE_SCRIPT_NAME, '', 1)
+        return Response({'reset_url': reset_url}, status=200)
 
 
 @method_decorator(

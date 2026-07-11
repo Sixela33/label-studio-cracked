@@ -106,6 +106,27 @@ class UserSignupForm(forms.Form):
         return user
 
 
+class SetPasswordForm(forms.Form):
+    password = forms.CharField(widget=forms.PasswordInput())
+    password_confirm = forms.CharField(widget=forms.PasswordInput())
+
+    def clean_password(self):
+        password = self.cleaned_data.get('password')
+        try:
+            validate_password(password)
+        except DjangoValidationError as e:
+            raise forms.ValidationError(e.messages)
+        return password
+
+    def clean(self):
+        cleaned = super().clean()
+        password = cleaned.get('password')
+        password_confirm = cleaned.get('password_confirm')
+        if password and password_confirm and password != password_confirm:
+            raise forms.ValidationError('Passwords do not match')
+        return cleaned
+
+
 class UserProfileForm(forms.ModelForm):
     """This form is used in profile account pages"""
 

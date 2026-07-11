@@ -9,14 +9,17 @@ from core.utils.common import load_func
 from django.conf import settings
 from django.contrib import auth
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import redirect, render, reverse
-from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.encoding import force_str
+from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
 from organizations.forms import OrganizationSignupForm
 from organizations.models import Organization
 from rest_framework.authtoken.models import Token
 from users import forms
 from users.functions import login, proceed_registration
+from users.models import User
 
 logger = logging.getLogger()
 
@@ -139,6 +142,31 @@ def user_login(request):
         return render(request, 'users/new-ui/user_login.html', {'form': form, 'next': quote(next_page)})
 
     return render(request, 'users/user_login.html', {'form': form, 'next': quote(next_page)})
+
+
+@enforce_csrf_checks
+def user_reset_password(request, uidb64, token):
+    """Set new password page, reached via an admin-generated one-time link"""
+    try:
+        uid = force_str(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(pk=uid)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        user = None
+
+    token_valid = user is not None and default_token_generator.check_token(user, token)
+
+    if not token_valid:
+        return render(request, 'users/user_reset_password.html', {'token_valid': False})
+
+    form = forms.SetPasswordForm()
+    if request.method == 'POST':
+        form = forms.SetPasswordForm(request.POST)
+        if form.is_valid():
+            user.set_password(form.cleaned_data['password'])
+            user.save(update_fields=['password'])
+            return redirect(reverse('user-login'))
+
+    return render(request, 'users/user_reset_password.html', {'form': form, 'token_valid': True})
 
 
 @login_required

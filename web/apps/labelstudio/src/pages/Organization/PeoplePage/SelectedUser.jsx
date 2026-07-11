@@ -23,7 +23,7 @@ const UserProjectsLinks = ({ projects }) => {
   );
 };
 
-export const SelectedUser = ({ user, canManageRoles, onRoleChange, onClose }) => {
+export const SelectedUser = ({ user, canManageRoles, currentUserId, onRoleChange, onClose, onResetPassword }) => {
   const fullName = [user.first_name, user.last_name]
     .filter((n) => !!n)
     .join(" ")
@@ -32,6 +32,7 @@ export const SelectedUser = ({ user, canManageRoles, onRoleChange, onClose }) =>
   const [savingRole, setSavingRole] = useState(false);
   const effectiveRole = user.effective_role || user.role;
   const canEditRole = canManageRoles && effectiveRole !== "owner";
+  const canResetPassword = canManageRoles && effectiveRole !== "owner" && user.id !== currentUserId;
 
   const changeRole = async (event) => {
     const role = event.target.value;
@@ -81,6 +82,14 @@ export const SelectedUser = ({ user, canManageRoles, onRoleChange, onClose }) =>
           <span className={cn("user-info").elem("role").toClassName()}>{effectiveRole}</span>
         )}
       </div>
+
+      {canResetPassword && (
+        <div className={cn("user-info").elem("section").toClassName()}>
+          <Button look="outlined" onClick={onResetPassword} aria-label="Reset member password">
+            Reset password
+          </Button>
+        </div>
+      )}
 
       {!!user.created_projects.length && (
         <div className={cn("user-info").elem("section").toClassName()}>

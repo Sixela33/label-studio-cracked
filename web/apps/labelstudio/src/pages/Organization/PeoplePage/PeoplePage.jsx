@@ -13,6 +13,7 @@ import { TokenSettingsModal } from "@humansignal/app-common/blocks/TokenSettings
 import { IconPlus } from "@humansignal/icons";
 import { useToast } from "@humansignal/ui";
 import { InviteLink } from "./InviteLink";
+import { PasswordResetLink } from "./PasswordResetLink";
 import { SelectedUser } from "./SelectedUser";
 import { useAPI } from "../../../providers/ApiProvider";
 import { ABILITY, useAuth } from "@humansignal/core/providers/AuthProvider";
@@ -26,6 +27,7 @@ export const PeoplePage = () => {
   const canManageRoles = permissions.can(ABILITY.can_change_organizations);
   const [selectedUser, setSelectedUser] = useState(null);
   const [invitationOpen, setInvitationOpen] = useState(false);
+  const [resetPasswordOpen, setResetPasswordOpen] = useState(false);
   const [peopleRefreshKey, setPeopleRefreshKey] = useState(0);
 
   useUpdatePageTitle("People");
@@ -121,8 +123,10 @@ export const PeoplePage = () => {
           <SelectedUser
             user={selectedUser}
             canManageRoles={canManageRoles}
+            currentUserId={currentUser?.id}
             onRoleChange={updateRole}
             onClose={() => selectUser(null)}
+            onResetPassword={() => setResetPasswordOpen(true)}
           />
         ) : (
           isFF(FF_LSDV_E_297) && <HeidiTips collection="organizationPage" />
@@ -134,6 +138,12 @@ export const PeoplePage = () => {
           console.log("hidden");
           setInvitationOpen(false);
         }}
+      />
+      <PasswordResetLink
+        pk={activeOrganizationId}
+        userPk={selectedUser?.id}
+        opened={resetPasswordOpen}
+        onClosed={() => setResetPasswordOpen(false)}
       />
     </div>
   );

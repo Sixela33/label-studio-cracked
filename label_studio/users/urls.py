@@ -18,6 +18,7 @@ urlpatterns = [
     # Authentication
     path('user/login/', views.user_login, name='user-login'),
     path('user/signup/', views.user_signup, name='user-signup'),
+    path('user/reset-password/<uidb64>/<token>/', views.user_reset_password, name='user-reset-password'),
     path('user/account/', views.user_account, name='user-account'),
     path('user/account/<sub_path>', views.user_account, name='user-account-anything'),
     re_path(r'^logout/?$', views.logout, name='logout'),
