@@ -572,7 +572,7 @@ export default observer(
       const tool = item.getToolsManager().findSelectedTool();
       const isAllowedTool = tool?.toolName?.match?.(allowedHoverTypes) !== null ?? false;
 
-      const hoveredRegion = item.regs.find((reg) => {
+      const hoveredRegion = [...item.regs].reverse().find((reg) => {
         if (reg.selected || tool?.mode === "drawing") return false;
 
         return reg.isHovered?.() ?? false;
@@ -1392,7 +1392,11 @@ const StageContent = observer(({ item, store, state, crosshairRef }) => {
   if (!store.task || !item.currentSrc) return null;
 
   // Keep selected or highlighted region on top
-  const regions = [...item.regs].sort((r) => (r.highlighted || r.selected ? 1 : -1));
+  const regions = [...item.regs].sort((a, b) => {
+    const aOnTop = a.highlighted || a.selected ? 1 : 0;
+    const bOnTop = b.highlighted || b.selected ? 1 : 0;
+    return aOnTop - bOnTop;
+  });
   const paginationEnabled = !!item.isMultiItem;
   const wrapperClasses = [styles.wrapperComponent, item.images.length > 1 ? styles.withGallery : styles.wrapper];
   const tool = item.getToolsManager().findSelectedTool();
